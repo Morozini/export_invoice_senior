@@ -1,157 +1,117 @@
-
-from app.dto.get_consultar_geral_dto import GetConsultaGeralSeniorDTO
-from app.mappers.create_consultageral_mappper import CreateConsultaGeralMapper
+import logging
+from datetime import datetime
+from app.repository.nota_fiscal_entrada_repository import NotaFiscalEntradaRepository
 from app.services.get_consulta_geral_senior import GetConsultaGeralService
+from app.mappers.create_consultageral_mappper import CreateNotaFiscalEntradaMapper
+from app.dto.get_consultar_geral_dto import GetConsultaGeralSeniorDTO
+from zeep.helpers import serialize_object
+
+logger = logging.getLogger(__name__)
 
 
 class ConsultarGeralUseCase:
-    def __init__(self, request):
+    def __init__(self, request: dict):
+        """
+        request: dict com 'codigo_empresa' e 'codigo_filial'
+        """
         self.request = request
-        payload = GetConsultaGeralSeniorDTO(**request)
-        self.payload_mapper = CreateConsultaGeralMapper.create(payload)
         self.service = GetConsultaGeralService()
+        self.repository = NotaFiscalEntradaRepository()
 
-    def execute(self):
-        return self.service.get_nota_fiscal_entrada(self.payload_mapper)
-    
-    def validation(self, request):
-        print(request)
-        list_response = []
-        lista_notas = request.notaFiscal
+    def _parse_date(self, date_str: str):
+        """Converte string no formato dd/mm/yyyy para datetime.date"""
+        if not date_str:
+            return None
+        try:
+            return datetime.strptime(date_str, "%d/%m/%Y").date()
+        except ValueError:
+            logger.warning(f"Data inválida: {date_str}")
+            return None
 
-        if not lista_notas:
-            return {
-                'retorno': 'Nota Fiscal não informada.',
-                'situacao': 'erro'
-            }
-        for notaFiscal in lista_notas:
-            codigo_empresa = notaFiscal.codEmp
-            codigo_filial = notaFiscal.codFil
-            data_emissao = notaFiscal.datEmi
-            nuemro_nota_fiscal = notaFiscal.numNfv
-            situacao_nota_fiscal = notaFiscal.sitNfv
+    def _map_nota(self, nota: dict) -> dict:
+        """
+        Mapeia a nota da API para o modelo do banco, usando valores do request
+        caso a API não retorne 'codEmp' ou 'codFil'.
+        """
+        campo_usuario = {c["campo"]: c["valor"] for c in nota.get("campoUsuario", [])}
 
-            
-            list_response.append({
-                'codigo_empresa': codigo_empresa,
-                'codigo_filial': codigo_filial,
-                'data_emissao': data_emissao,
-                'nuemro_nota_fiscal': nuemro_nota_fiscal,
-                'situacao_nota_fiscal': situacao_nota_fiscal,
-            })
-            return list_response
-        
-    def validation_rateio(self, request):
-        list_response_rateio = []
-        lista_titulos = request.notaFiscal
+        codigo_empresa = nota.get("codEmp") or self.request["codigo_empresa"]
+        codigo_filial = nota.get("codFil") or self.request["codigo_filial"]
 
-        if not lista_titulos:
-            return {
-                'retorno': 'Nenhum título informado.',
-                'situacao': 'erro'
-            }
+        if codigo_empresa is None or codigo_filial is None:
+            logger.warning(f"Nota ignorada por falta de campos obrigatórios: {nota}")
+            return None
 
-        for titulo in lista_titulos:
-            if not hasattr(titulo, "rateio") or not titulo.rateio:
-                return {
-                    'retorno': f'Rateio não informado para o título.',
-                    'situacao': 'erro'
-                }
+        return {
+            "codigo_empresa": nota.get("codEmp"),
+            "codigo_filial": nota.get("codFil"),
+            "codigo_fornecedor": nota.get("codFor"),
+            "codigo_serie": nota.get("codSnf"),
+            "numero_nota_fiscal": nota.get("numNfc"),
+            "numero_ordem_compra": nota.get("numOcp") or None,
+            "numero_titulo": nota.get("numTit") or None,
+            "situacao_nota": nota.get("sitNfc") or "N/A",
+            "codigo_forma_pagamento": nota.get("codFpg") or None,
+            "data_emissao": self._parse_date(nota.get("datEmi")),
+            "data_entrada": self._parse_date(nota.get("datEnt")),
+            "data_fechamento_nf": self._parse_date(nota.get("datFec")),
+            "data_vencimento_parcela": self._parse_date(
+                nota.get("parcela")[0].get("vctPar") if nota.get("parcela") else None
+            ),
+            "observacao": nota.get("obsNfc") or " ",
+            "valor_base": nota.get("vlrBru") or 0,
+            "valor_liquido": nota.get("vlrLiq") or 0,
+            "valor_diferenca": nota.get("vlrDar") or 0,
+            "codigo_acumulador": campo_usuario.get("USU_CODACU"),
+            "iss_vlr_retido": nota.get("vlrIss"),
+            "ir_vlr_retido": nota.get("vlrIrf"),
+            "inss_vlr_retido": nota.get("vlrIns"),
+            "cofins_vlr_retido": nota.get("vlrCrt"),
+            "pis_vlr_retido": nota.get("vlrPit"),
+            "csll_vlr_retido": nota.get("vlrCsl"),
+        }
 
-            for rateio in titulo.rateio:
-                list_response_rateio.append({
-                    'transacao_saida': rateio.tnsSer,
-                    'codigo_cta_financeira': rateio.ctaFin,
-                    'codigo_centro_de_custo': rateio.codCcu,
-                    'codigo_fase': rateio.codFpj,
-                    'codigo_projeto': rateio.numPrj,
-                    'valor_rateio': rateio.vlrRat
-                })
+    async def execute(self) -> dict:
+        """
+        Executa a consulta de notas para a empresa/filial do request.
+        """
 
-        return list_response_rateio
-    
-    def validation_acumulador(self, request):
-        list_response_acumulador = []
-        lista_notas = request.notaFiscal
+        # cria DTO
+        dto = GetConsultaGeralSeniorDTO(**self.request)
 
-        if not lista_notas:
-            return {
-                'retorno': 'Nenhuma nota fiscal informada.',
-                'situacao': 'erro'
-            }
+        # usa o Mapper para criar payload
+        payload = CreateNotaFiscalEntradaMapper.create(dto)
 
-        for nota in lista_notas:
-            if not hasattr(nota, "camposUsuarioNotaFiscal") or not nota.camposUsuarioNotaFiscal:
-                return {
-                    'retorno': 'Acumulador não informado na nota fiscal.',
-                    'situacao': 'erro'
-                }
+        # chama o service
+        response = self.service.get_nota_fiscal_entrada(payload)
 
-            for campo in nota.camposUsuarioNotaFiscal:
-                if campo.campo == "USU_CODACU":
-                    list_response_acumulador.append({
-                        'codigo_acumulador': campo.valor
-                    })
+        if not response:
+            logger.warning(
+                f"Nenhuma nota retornada para empresa {self.request['codigo_empresa']} | filial {self.request['codigo_filial']}"
+            )
+            return {"status": "ok", "total": 0}
 
-        return list_response_acumulador
-    
-    def validation_parcela(self, request):
-        list_response_parcela = []
-        lista_notas = request.notaFiscal
+        # serializa a resposta do Zeep
+        response = serialize_object(response)
+        notas = response.get("notaFiscal", [])
 
-        if not lista_notas:
-            return {
-                'retorno': 'Nenhuma nota fiscal informada.',
-                'situacao': 'erro'
-            }
+        if not notas:
+            logger.warning(f"Nenhuma nota encontrada no response")
+            return {"status": "ok", "total": 0}
 
-        for nota in lista_notas:
-            if not hasattr(nota, "parcela") or not nota.parcela:
-                return {
-                    'retorno': f'Parcela não informada para a nota fiscal {getattr(nota, "numNfv", "")}.',
-                    'situacao': 'erro'
-                }
+        # mapeia e filtra notas inválidas
+        notas_mapeadas = [n for n in (self._map_nota(n) for n in notas) if n]
 
-            for parcela in nota.parcela:
-                list_response_parcela.append({
-                    'codigo_empresa': parcela.codEmp,
-                    'codigo_filial': parcela.codFil,
-                    'usuario_gerador': parcela.usuGer,
-                    'numero_titulo': parcela.numTit,
-                    'valor_parcela': parcela.vlrPar,
-                    'vencimento_parcela': parcela.vctPar,
-                })
+        if not notas_mapeadas:
+            logger.warning("Nenhuma nota válida para salvar")
+            return {"status": "ok", "total": 0}
 
-        return list_response_parcela
-    
-    def validation_servico(self, request):
-        list_response_servico = []
-        lista_notas = request.notaFiscal
+        # salva no banco
+        try:
+            await self.repository.bulk_save(notas_mapeadas)
+            logger.info(f"{len(notas_mapeadas)} notas salvas com sucesso!")
+        except Exception as e:
+            logger.error(f"Erro ao salvar notas: {e}", exc_info=True)
+            return {"status": "error", "total": 0, "message": str(e)}
 
-        if not lista_notas:
-            return {
-                'retorno': 'Nenhuma nota fiscal informada.',
-                'situacao': 'erro'
-            }
-
-        for nota in lista_notas:
-            if not hasattr(nota, "servico") or not nota.servico:
-                return {
-                    'retorno': f'Serviço não informado para a nota fiscal {getattr(nota, "numNfv", "")}.',
-                    'situacao': 'erro'
-                }
-
-            for servico in nota.servico:
-                list_response_servico.append({
-                    'codigo_servico': servico.codSer,
-                    'descricao_servico': servico.cplIsv,
-                    'valor_servico': servico.preUni,
-                    'valor_iss': servico.vlrIss,
-                    'valor_pis': servico.vlrPit,
-                    'valor_cofins': servico.vlrCrt,
-                    'valor_csll': servico.vlrCsl,
-                    'valor_ir': servico.vlrIrf,
-                })
-
-        return list_response_servico
-
+        return {"status": "ok", "total": len(notas_mapeadas)}

@@ -1,16 +1,15 @@
 from app.dto.get_consultar_geral_dto import GetConsultaGeralSeniorDTO
 
 
-class CreateConsultaGeralMapper:
+class CreateNotaFiscalEntradaMapper:
 
     @staticmethod
-    def create(dto: GetConsultaGeralSeniorDTO):
+    def create(dto):
         return {
-            "codEmp":str(dto.codigo_empresa),
+            "codEmp": str(dto.codigo_empresa),
+            "codFil": str(dto.codigo_filial),
             "codSnf": "NFS",
-            "codFil":str(dto.codigo_filial),
-            "datEmiIni": "01/12/2025",
+            "datEmiIni": "10/12/2025",
             "datEmiFim": "30/12/2025",
-            "numNfc": "1254",
             "identificadorSistema": "TL",
         }
