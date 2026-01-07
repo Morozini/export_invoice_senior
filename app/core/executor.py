@@ -11,6 +11,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
 async def get_empresas_filiais():
     return [
         {"codigo_empresa": 10, "codigo_filial": 1001},
@@ -19,21 +20,25 @@ async def get_empresas_filiais():
         {"codigo_empresa": 40, "codigo_filial": 4001},
     ]
 
+
 async def executar_consulta_por_empresa_filial(request: dict):
-    logger.info(
-        f"Iniciando consulta | Empresa {request['codigo_empresa']} | "
-        f"Filial {request['codigo_filial']}"
-    )
+    empresa = request["codigo_empresa"]
+    filial = request["codigo_filial"]
+
+    logger.info(f"================ INÍCIO =================")
+    logger.info(f"Iniciando consulta | Empresa {empresa} | Filial {filial}")
 
     use_case = ConsultarGeralUseCase(request)
     result = await use_case.execute()
 
-    logger.info(
-        f"Finalizado | Empresa {request['codigo_empresa']} | "
-        f"Filial {request['codigo_filial']} | "
-        f"Total OC: {result.get('total', 0)}"
-    )
+    status = result.get("status")
+    total = result.get("total", 0)
 
+    logger.info(
+        f"Finalizado | Empresa {empresa} | Filial {filial} | "
+        f"Status: {status} | Total processado: {total}"
+    )
+    logger.info(f"================ FIM =================\n")
 
 async def run_consulta(empresas_filiais=None):
     try:

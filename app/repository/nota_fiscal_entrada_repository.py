@@ -1,11 +1,15 @@
+
 from app.database.models import NotasFiscalEntradaApiSenior
+
 
 class NotaFiscalEntradaRepository:
 
-    @staticmethod
-    async def bulk_save(data_list: list[dict]):
-        """
-        Salva notas já mapeadas pelo UseCase diretamente no banco
-        """
-        objects = [NotasFiscalEntradaApiSenior(**nota) for nota in data_list]
-        await NotasFiscalEntradaApiSenior.bulk_create(objects)
+    async def bulk_upsert(self, notas: list[dict]):
+        for nota in notas:
+            await NotasFiscalEntradaApiSenior.update_or_create(
+                defaults=nota,
+                codigo_empresa=nota["codigo_empresa"],
+                codigo_filial=nota["codigo_filial"],
+                codigo_serie=nota["codigo_serie"],
+                numero_nota_fiscal=nota["numero_nota_fiscal"],
+            )
