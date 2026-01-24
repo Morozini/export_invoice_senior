@@ -12,11 +12,9 @@ logger = logging.getLogger(__name__)
 
 class ConsultarGeralUseCase:
     def __init__(self, request: dict):
-        
         self.request = request
         self.service = GetConsultaGeralService()
         self.repository = NotaFiscalEntradaRepository()
-
 
     def _parse_date(self, date_str: str):
         if not date_str:
@@ -55,16 +53,12 @@ class ConsultarGeralUseCase:
         if nota.get("parcela"):
             return self._parse_date(nota["parcela"][0].get("vctPar"))
         return None
-
-    def _map_nota(self, nota: dict) -> dict | None:
+    
+    def _map_nota(self, nota: dict) -> dict:
         campo_usuario = {c["campo"]: c["valor"] for c in nota.get("campoUsuario", [])}
 
         codigo_empresa = nota.get("codEmp") or self.request.get("codigo_empresa")
         codigo_filial = nota.get("codFil") or self.request.get("codigo_filial")
-
-        if not codigo_empresa or not codigo_filial:
-            logger.warning(f"Nota ignorada por falta de empresa/filial: {nota}")
-            return None
 
         numero_ordem_compra = self._get_numero_ordem_compra(nota)
 
@@ -80,8 +74,9 @@ class ConsultarGeralUseCase:
         return {
             "codigo_empresa": int(codigo_empresa),
             "codigo_filial": int(codigo_filial),
+
             "codigo_fornecedor": nota.get("codFor"),
-            "codigo_serie": nota.get("codSnf"),
+            "codigo_serie": nota.get("codSnf") or "SEM_SERIE",
             "numero_nota_fiscal": nota.get("numNfc"),
 
             "numero_ordem_compra": numero_ordem_compra,
@@ -115,43 +110,74 @@ class ConsultarGeralUseCase:
     async def execute(self) -> dict:
         try:
             dto = GetConsultaGeralSeniorDTO(**self.request)
-            payload = CreateNotaFiscalEntradaMapper.create(dto)
 
-            response = self.service.get_nota_fiscal_entrada(payload)
+            indice_pagina = 1
+            total_processado = 0
 
-            if not response:
-                logger.warning(
-                    f"Nenhuma nota retornada para empresa {self.request['codigo_empresa']} | filial {self.request['codigo_filial']}"
+            logger.info(
+                f"Iniciando paginação | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial}"
+            )
+
+            while True:
+                logger.info(f"Consultando página {indice_pagina}")
+
+                payload = CreateNotaFiscalEntradaMapper.create(
+                    dto,
+                    indice_pagina=indice_pagina
                 )
-                return {"status": "ok", "total": 0}
 
-            response = serialize_object(response)
-            notas = response.get("notaFiscal", [])
+                response = self.service.get_nota_fiscal_entrada(payload)
 
-            if not notas:
-                logger.warning("Nenhuma nota encontrada no response")
-                return {"status": "ok", "total": 0}
+                if not response:
+                    logger.info(f"Sem resposta da API na página {indice_pagina}. Encerrando.")
+                    break
 
-            notas_mapeadas = []
+                response = serialize_object(response)
+                notas = response.get("notaFiscal", [])
 
-            for nota in notas:
-                if not nota:
-                    continue
+                if not notas:
+                    logger.info(
+                        f"Nenhuma nota retornada na página {indice_pagina}. Fim da paginação."
+                    )
+                    break
 
-                nota_map = self._map_nota(nota)
+                notas_mapeadas = []
 
-                if nota_map:
-                    notas_mapeadas.append(nota_map)
+                for nota in notas:
+                    if not nota:
+                        continue
 
-            if not notas_mapeadas:
-                logger.warning("Nenhuma nota válida após mapeamento")
-                return {"status": "ok", "total": 0}
+                    try:
+                        nota_map = self._map_nota(nota)
+                        notas_mapeadas.append(nota_map)
+                    except Exception as e:
+                        logger.error(
+                            f"Erro ao mapear nota numNfc={nota.get('numNfc')} | Erro: {e}",
+                            exc_info=True
+                        )
 
-            await self.repository.bulk_upsert(notas_mapeadas)
+                if notas_mapeadas:
+                    await self.repository.bulk_upsert(notas_mapeadas)
+                    logger.info(
+                        f"{len(notas_mapeadas)} notas processadas na página {indice_pagina}."
+                    )
+                    total_processado += len(notas_mapeadas)
 
-            logger.info(f"{len(notas_mapeadas)} notas processadas (upsert) com sucesso!")
-            return {"status": "ok", "total": len(notas_mapeadas)}
+                indice_pagina += 1
+
+            logger.info(
+                f"Processo finalizado | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial} | Total: {total_processado}"
+            )
+
+            return {
+                "status": "ok",
+                "total": total_processado
+            }
 
         except Exception as e:
             logger.error(f"Erro no processamento das notas: {e}", exc_info=True)
-            return {"status": "error", "total": 0, "message": str(e)}
+            return {
+                "status": "error",
+                "total": 0,
+                "message": str(e)
+            }
