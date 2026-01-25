@@ -4,13 +4,7 @@ from tortoise import Tortoise
 from app.use_cases.consultar_geral_use_case import ConsultarGeralUseCase
 from app.database.config import init
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
 logger = logging.getLogger(__name__)
-
 
 async def get_empresas_filiais():
     return [

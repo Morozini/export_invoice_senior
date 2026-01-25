@@ -1,16 +1,19 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from zeep.helpers import serialize_object
 
 from app.repository.nota_fiscal_entrada_repository import NotaFiscalEntradaRepository
 from app.services.get_consulta_geral_senior import GetConsultaGeralService
 from app.mappers.create_consultageral_mappper import CreateNotaFiscalEntradaMapper
 from app.dto.get_consultar_geral_dto import GetConsultaGeralSeniorDTO
+from app.utils.gerar_semanas import gerar_semanas
 
 logger = logging.getLogger(__name__)
 
 
 class ConsultarGeralUseCase:
+    LIMITE_PAGINA = 50
+
     def __init__(self, request: dict):
         self.request = request
         self.service = GetConsultaGeralService()
@@ -26,17 +29,12 @@ class ConsultarGeralUseCase:
             return None
 
     def _get_numero_ordem_compra(self, nota: dict):
-        if nota.get("servico"):
-            for serv in nota["servico"]:
-                num_ocp = serv.get("numOcp")
-                if num_ocp and str(num_ocp) != "0":
-                    return num_ocp
-
-        if nota.get("produto"):
-            for prod in nota["produto"]:
-                num_ocp = prod.get("numOcp")
-                if num_ocp and str(num_ocp) != "0":
-                    return num_ocp
+        for grupo in ("servico", "produto"):
+            if nota.get(grupo):
+                for item in nota[grupo]:
+                    num_ocp = item.get("numOcp")
+                    if num_ocp and str(num_ocp) != "0":
+                        return num_ocp
 
         num_ocp = nota.get("numOcp")
         if num_ocp and str(num_ocp) != "0":
@@ -53,37 +51,26 @@ class ConsultarGeralUseCase:
         if nota.get("parcela"):
             return self._parse_date(nota["parcela"][0].get("vctPar"))
         return None
-    
+
     def _map_nota(self, nota: dict) -> dict:
-        campo_usuario = {c["campo"]: c["valor"] for c in nota.get("campoUsuario", [])}
-
-        codigo_empresa = nota.get("codEmp") or self.request.get("codigo_empresa")
-        codigo_filial = nota.get("codFil") or self.request.get("codigo_filial")
-
-        numero_ordem_compra = self._get_numero_ordem_compra(nota)
-
-        valor_base_produto = nota.get("vlrBpr") or 0
-        valor_base_servico = nota.get("vlrBse") or 0
-
-        valor_liquido = (
-            nota.get("vlrLiq")
-            or nota.get("vlrliq")
-            or 0
-        )
+        campo_usuario = {
+            c["campo"]: c["valor"]
+            for c in nota.get("campoUsuario", [])
+        }
 
         return {
-            "codigo_empresa": int(codigo_empresa),
-            "codigo_filial": int(codigo_filial),
+            "codigo_empresa": int(nota.get("codEmp") or self.request["codigo_empresa"]),
+            "codigo_filial": int(nota.get("codFil") or self.request["codigo_filial"]),
 
             "codigo_fornecedor": nota.get("codFor"),
             "codigo_serie": nota.get("codSnf") or "SEM_SERIE",
             "numero_nota_fiscal": nota.get("numNfc"),
 
-            "numero_ordem_compra": numero_ordem_compra,
+            "numero_ordem_compra": self._get_numero_ordem_compra(nota),
             "numero_titulo": self._get_numero_titulo(nota),
 
             "situacao_nota": nota.get("sitNfc") or "N/A",
-            "codigo_forma_pagamento": nota.get("codFpg") or None,
+            "codigo_forma_pagamento": nota.get("codFpg"),
 
             "data_emissao": self._parse_date(nota.get("datEmi")),
             "data_entrada": self._parse_date(nota.get("datEnt")),
@@ -92,9 +79,9 @@ class ConsultarGeralUseCase:
 
             "observacao": nota.get("obsNfc") or " ",
 
-            "valor_base_produto": valor_base_produto,
-            "valor_base_servico": valor_base_servico,
-            "valor_liquido": valor_liquido,
+            "valor_base_produto": nota.get("vlrBpr") or 0,
+            "valor_base_servico": nota.get("vlrBse") or 0,
+            "valor_liquido": nota.get("vlrLiq") or nota.get("vlrliq") or 0,
             "valor_diferenca": nota.get("vlrDar") or 0,
 
             "codigo_acumulador": campo_usuario.get("USU_CODACU"),
@@ -111,73 +98,68 @@ class ConsultarGeralUseCase:
         try:
             dto = GetConsultaGeralSeniorDTO(**self.request)
 
-            indice_pagina = 1
+            data_inicio = date(2026, 1, 1)
+            data_fim = date(2026, 12, 31)
+
             total_processado = 0
 
             logger.info(
-                f"Iniciando paginação | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial}"
+                f"Iniciando consulta | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial}"
             )
 
-            while True:
-                logger.info(f"Consultando página {indice_pagina}")
+            for ini, fim in gerar_semanas(data_inicio, data_fim):
+                indice_pagina = 1
 
-                payload = CreateNotaFiscalEntradaMapper.create(
-                    dto,
-                    indice_pagina=indice_pagina
+                logger.info(
+                    f"Período {ini:%d/%m/%Y} → {fim:%d/%m/%Y}"
                 )
 
-                response = self.service.get_nota_fiscal_entrada(payload)
-
-                if not response:
-                    logger.info(f"Sem resposta da API na página {indice_pagina}. Encerrando.")
-                    break
-
-                response = serialize_object(response)
-                notas = response.get("notaFiscal", [])
-
-                if not notas:
-                    logger.info(
-                        f"Nenhuma nota retornada na página {indice_pagina}. Fim da paginação."
+                while True:
+                    payload = CreateNotaFiscalEntradaMapper.create(
+                        dto=dto,
+                        dat_ini=ini.strftime("%d/%m/%Y"),
+                        dat_fim=fim.strftime("%d/%m/%Y"),
+                        indice_pagina=indice_pagina,
+                        limite_pagina=self.LIMITE_PAGINA,
                     )
-                    break
 
-                notas_mapeadas = []
+                    response = self.service.get_nota_fiscal_entrada(payload)
+                    if not response:
+                        break
 
-                for nota in notas:
-                    if not nota:
-                        continue
+                    response = serialize_object(response)
+                    notas = response.get("notaFiscal", [])
 
-                    try:
-                        nota_map = self._map_nota(nota)
-                        notas_mapeadas.append(nota_map)
-                    except Exception as e:
-                        logger.error(
-                            f"Erro ao mapear nota numNfc={nota.get('numNfc')} | Erro: {e}",
-                            exc_info=True
-                        )
+                    if not notas:
+                        break
 
-                if notas_mapeadas:
-                    await self.repository.bulk_upsert(notas_mapeadas)
-                    logger.info(
-                        f"{len(notas_mapeadas)} notas processadas na página {indice_pagina}."
-                    )
-                    total_processado += len(notas_mapeadas)
+                    notas_mapeadas = []
 
-                indice_pagina += 1
+                    for nota in notas:
+                        try:
+                            notas_mapeadas.append(self._map_nota(nota))
+                        except Exception as e:
+                            logger.error(
+                                f"Erro ao mapear NF {nota.get('numNfc')}: {e}",
+                                exc_info=True,
+                            )
+
+                    if notas_mapeadas:
+                        await self.repository.bulk_upsert(notas_mapeadas)
+                        total_processado += len(notas_mapeadas)
+
+                    if len(notas) < self.LIMITE_PAGINA:
+                        break
+
+                    indice_pagina += 1
 
             logger.info(
-                f"Processo finalizado | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial} | Total: {total_processado}"
+                f"Finalizado | Empresa {dto.codigo_empresa} | "
+                f"Filial {dto.codigo_filial} | Total {total_processado}"
             )
 
-            return {
-                "status": "ok",
-                "total": total_processado
-            }
+            return {"status": "ok", "total": total_processado}
 
         except Exception as e:
-            logger.error(f"Erro no processamento das notas: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "total": 0,
-                "message": str(e)
-            }
+            logger.error("Erro no processamento", exc_info=True)
+            return {"status": "error", "total": 0, "message": str(e)}
