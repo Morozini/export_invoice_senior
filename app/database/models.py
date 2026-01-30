@@ -19,23 +19,21 @@ class NotasFiscalEntradaApiSenior(Model):
     data_fechamento_nf = fields.DateField(null=True, description="datFec")
     data_vencimento_parcela = fields.DateField(null=True, description="vctPar")
     observacao = fields.TextField(null=True, description="obsNfc")
-    valor_base_servico = fields.IntField(max_digits=15, decimal_places=2, description="vlrBse")
-    valor_base_produto = fields.IntField(max_digits=15, decimal_places=2, description="vlrBpr")
-    valor_liquido = fields.IntField(max_digits=15, decimal_places=2, description="vlrLiq")
-    valor_diferenca = fields.IntField(max_digits=15, decimal_places=2, description="vlrDar")
+    valor_base_servico = fields.FloatField(max_digits=15, description="vlrBse")
+    valor_base_produto = fields.FloatField(max_digits=15, description="vlrBpr")
+    valor_liquido = fields.FloatField(max_digits=15, description="vlrLiq")
+    valor_diferenca = fields.FloatField(max_digits=15, description="vlrDar")
     codigo_acumulador = fields.CharField(max_length=20, null=True, description="USU_CodAcu")
-    iss_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrIss")
-    ir_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrIrf")
-    inss_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrIns")
-    cofins_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrCrt")
-    pis_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrPit")
-    csll_vlr_retido = fields.IntField(max_digits=15, decimal_places=2, null=True, description="vlrCsl")
+    iss_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrIss")
+    ir_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrIrf")
+    inss_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrIns")
+    cofins_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrCrt")
+    pis_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrPit")
+    csll_vlr_retido = fields.FloatField(max_digits=15, null=True, description="vlrCsl")
     class Meta:
         table = "task_notas_fiscal_entrada_api_senior"
         unique_together = (
-            "codigo_empresa",
             "codigo_filial",
             "codigo_fornecedor",
-            "codigo_serie",
             "numero_nota_fiscal",
         )

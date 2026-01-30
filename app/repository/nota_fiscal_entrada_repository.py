@@ -3,13 +3,18 @@ from app.database.models import NotasFiscalEntradaApiSenior
 
 class NotaFiscalEntradaRepository:
 
-    async def bulk_upsert(self, notas: list[dict]):
+    async def bulk_upsert(self, notas: list[dict]) -> int:
         if not notas:
-            return
+            return 0
 
-        objs = [NotasFiscalEntradaApiSenior(**nota) for nota in notas]
+        objetos = [
+            NotasFiscalEntradaApiSenior(**nota)
+            for nota in notas
+        ]
 
         await NotasFiscalEntradaApiSenior.bulk_create(
-            objs,
+            objetos,
             ignore_conflicts=True
         )
+
+        return len(objetos)

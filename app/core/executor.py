@@ -30,7 +30,6 @@ async def executar_consulta_por_empresa_filial(request: dict):
 
     logger.info(
         f"Finalizado | Empresa {empresa} | Filial {filial} | "
-        f"Status: {status} | Total processado: {total}"
     )
     logger.info(f"================ FIM =================\n")
 

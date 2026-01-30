@@ -17,6 +17,6 @@ celery_app.conf.enable_utc = False
 celery_app.conf.beat_schedule = {
     "execute_task_nota_fiscal_entrada": {
         "task": "executar_task_nota_fiscal_entrada",
-        "schedule": crontab(hour=7, minute=0),
+        "schedule": crontab(hour=[7, 12, 17], minute=0),
     },
 }

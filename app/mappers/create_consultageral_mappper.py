@@ -6,7 +6,7 @@ class CreateNotaFiscalEntradaMapper:
         dat_ini: str,
         dat_fim: str,
         indice_pagina: int,
-        limite_pagina: int = 50,
+        limite_pagina: int = 100,
     ):
         return {
             "codEmp": str(dto.codigo_empresa),
