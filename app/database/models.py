@@ -37,3 +37,23 @@ class NotasFiscalEntradaApiSenior(Model):
             "codigo_fornecedor",
             "numero_nota_fiscal",
         )
+
+class RateioNotasFiscalEntradaApiSenior(Model):
+
+    id = fields.IntField(pk=True)
+    nota_fiscal_entrada = fields.ForeignKeyField(
+        "models.NotasFiscalEntradaApiSenior",
+        related_name="rateios",
+        on_delete=fields.CASCADE,
+    )
+    codigo_empresa = fields.IntField(description="codEmp")
+    codigo_filial = fields.IntField(description="codFil")
+    codigo_centro_custo = fields.CharField(max_length=20, null=True, description="codCcu")
+    valor_rateio_centro_custo = fields.FloatField(max_digits=15, null=True, description="vlrRat")
+    codigo_fase_projeto = fields.CharField(max_length=20, null=True, description="codFpj")
+    codigo_conta_financeira = fields.CharField(max_length=20, null=True, description="ctaFin")
+    valor_rateio_conta_financeira = fields.FloatField(max_digits=15, null=True, description="vlrCta")
+    codigo_projeto = fields.CharField(max_length=20, null=True, description="numPrj")
+    
+    class Meta:
+        table = "task_rateio_notas_fiscal_entrada_api_senior"

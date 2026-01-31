@@ -20,7 +20,6 @@ async def executar_consulta_por_empresa_filial(request: dict):
     filial = request["codigo_filial"]
 
     logger.info(f"================ INÍCIO =================")
-    logger.info(f"Iniciando consulta | Empresa {empresa} | Filial {filial}")
 
     use_case = ConsultarGeralUseCase(request)
     result = await use_case.execute()
@@ -28,9 +27,6 @@ async def executar_consulta_por_empresa_filial(request: dict):
     status = result.get("status")
     total = result.get("total", 0)
 
-    logger.info(
-        f"Finalizado | Empresa {empresa} | Filial {filial} | "
-    )
     logger.info(f"================ FIM =================\n")
 
 async def run_consulta(empresas_filiais=None):

@@ -3,8 +3,12 @@ from datetime import date, datetime
 from zeep.helpers import serialize_object
 
 from app.repository.nota_fiscal_entrada_repository import NotaFiscalEntradaRepository
+from app.repository.rateio_nota_fiscal_entrada_repository import (
+    RateioNotaFiscalEntradaRepository
+)
 from app.services.get_consulta_geral_senior import GetConsultaGeralService
 from app.mappers.create_consultageral_mappper import CreateNotaFiscalEntradaMapper
+from app.mappers.map_rateio_nota_fiscal_api_to_model import map_rateio_api_to_model
 from app.dto.get_consultar_geral_dto import GetConsultaGeralSeniorDTO
 from app.utils.gerar_semanas import gerar_semanas
 
@@ -18,6 +22,7 @@ class ConsultarGeralUseCase:
         self.request = request
         self.service = GetConsultaGeralService()
         self.repository = NotaFiscalEntradaRepository()
+        self.rateio_repository = RateioNotaFiscalEntradaRepository()
 
     def _parse_date(self, date_str: str):
         if not date_str:
@@ -30,11 +35,10 @@ class ConsultarGeralUseCase:
 
     def _get_numero_ordem_compra(self, nota: dict):
         for grupo in ("servico", "produto"):
-            if nota.get(grupo):
-                for item in nota[grupo]:
-                    num_ocp = item.get("numOcp")
-                    if num_ocp and str(num_ocp) != "0":
-                        return num_ocp
+            for item in nota.get(grupo) or []:
+                num_ocp = item.get("numOcp")
+                if num_ocp and str(num_ocp) != "0":
+                    return num_ocp
 
         num_ocp = nota.get("numOcp")
         if num_ocp and str(num_ocp) != "0":
@@ -89,15 +93,19 @@ class ConsultarGeralUseCase:
     async def execute(self) -> dict:
         try:
             dto = GetConsultaGeralSeniorDTO(**self.request)
+
             data_inicio = date(2026, 1, 1)
             data_fim = date.today()
+
             total_processado = 0
+
             logger.info(
                 f"Iniciando consulta | Empresa {dto.codigo_empresa} | Filial {dto.codigo_filial}"
             )
 
             for ini, fim in gerar_semanas(data_inicio, data_fim):
                 indice_pagina = 1
+
                 while True:
                     payload = CreateNotaFiscalEntradaMapper.create(
                         dto=dto,
@@ -106,32 +114,76 @@ class ConsultarGeralUseCase:
                         indice_pagina=indice_pagina,
                         limite_pagina=self.LIMITE_PAGINA,
                     )
+
                     response = self.service.get_nota_fiscal_entrada(payload)
                     if not response:
                         break
+
                     response = serialize_object(response)
                     notas = response.get("notaFiscal", [])
+
                     if not notas:
                         break
+
                     notas_mapeadas = []
+                    notas_validas_api = []
+
                     for nota in notas:
                         try:
                             notas_mapeadas.append(self._map_nota(nota))
+                            notas_validas_api.append(nota)
                         except Exception as e:
                             logger.error(
                                 f"Erro ao mapear NF {nota.get('numNfc')}: {e}",
                                 exc_info=True,
                             )
-                    if notas_mapeadas:
-                        inseridos = await self.repository.bulk_upsert(notas_mapeadas)
-                        total_processado += inseridos
+
+                    if not notas_mapeadas:
+                        break
+
+                    notas_model = await self.repository.bulk_upsert(notas_mapeadas)
+
+                    mapa_notas = {
+                        (
+                            n.codigo_filial,
+                            n.codigo_fornecedor,
+                            n.numero_nota_fiscal,
+                        ): n
+                        for n in notas_model
+                    }
+
+                    for nota_api in notas_validas_api:
+                        chave = (
+                            nota_api.get("codFil"),
+                            nota_api.get("codFor"),
+                            nota_api.get("numNfc"),
+                        )
+
+                        nota_model = mapa_notas.get(chave)
+                        if not nota_model:
+                            continue
+
+                        rateios_para_salvar = []
+
+                        for rateio in nota_api.get("rateio") or []:
+                            rateio_mapeado = map_rateio_api_to_model(rateio)
+                            rateio_mapeado["nota_fiscal_entrada"] = nota_model
+                            rateios_para_salvar.append(rateio_mapeado)
+
+                        if rateios_para_salvar:
+                            await self.rateio_repository.bulk_upsert(rateios_para_salvar)
+
+                    total_processado += len(notas_model)
+
                     if len(notas) < self.LIMITE_PAGINA:
                         break
+
                     indice_pagina += 1
 
             logger.info(
-                f"Finalizado | Empresa {dto.codigo_empresa} | "
+                f"Finalizado | Empresa {dto.codigo_empresa} | Total processado {total_processado}"
             )
+
             return {"status": "ok", "total": total_processado}
 
         except Exception as e:
